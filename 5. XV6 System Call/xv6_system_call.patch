@@ -1,0 +1,172 @@
+diff --git a/Makefile b/Makefile
+index 09d790c..c63b8bf 100644
+--- a/Makefile
++++ b/Makefile
+@@ -181,6 +181,7 @@ UPROGS=\
+ 	_usertests\
+ 	_wc\
+ 	_zombie\
++	_newsyscall\
+ 
+ fs.img: mkfs README $(UPROGS)
+ 	./mkfs fs.img README $(UPROGS)
+diff --git a/defs.h b/defs.h
+index 82fb982..ef7fd94 100644
+--- a/defs.h
++++ b/defs.h
+@@ -188,3 +188,13 @@ void            clearpteu(pde_t *pgdir, char *uva);
+ 
+ // number of elements in fixed-size array
+ #define NELEM(x) (sizeof(x)/sizeof((x)[0]))
++struct inf {
++	int forked;
++	int runnable;
++	int sleeping;
++	int zombie;
++	int tot_sched;
++	int tot_intr;
++	int tot_traps;
++};
++struct inf inf;
+diff --git a/newsyscall.c b/newsyscall.c
+new file mode 100644
+index 0000000..a5f785e
+--- /dev/null
++++ b/newsyscall.c
+@@ -0,0 +1,28 @@
++#include "types.h"
++#include "stat.h"
++#include "user.h"
++
++int
++main(int argc, char *argv[])
++{
++        struct inf{
++        int forked;
++        int runnable;
++        int sleeping;
++        int zombie;
++        int tot_sched;
++        int tot_traps;
++        int tot_intr;
++        };
++        struct inf *t = malloc(sizeof(struct inf));
++  info((void *)&t);
++  printf (1, "Forked Processes = %d\n", t->forked);
++  printf (1, "Runnable Processes = %d\n", t->runnable);
++  printf (1, "Sleeping Processes = %d\n", t->sleeping);
++  printf (1, "Keyboard Interrupts = %d\n", t->tot_intr);
++  printf (1, "Scheduled Processes = %d\n", t->tot_sched);
++  printf (1, "Traps = %d\n", t->tot_traps);
++  printf (1, "Zombie Processes = %d\n", t->zombie);
++  exit();
++}
+diff --git a/proc.c b/proc.c
+index 806b1b1..491881d 100644
+--- a/proc.c
++++ b/proc.c
+@@ -180,6 +180,7 @@ growproc(int n)
+ int
+ fork(void)
+ {
++  inf.forked++;
+   int i, pid;
+   struct proc *np;
+   struct proc *curproc = myproc();
+@@ -322,6 +323,7 @@ wait(void)
+ void
+ scheduler(void)
+ {
++  inf.tot_sched++;
+   struct proc *p;
+   struct cpu *c = mycpu();
+   c->proc = 0;
+@@ -532,3 +534,18 @@ procdump(void)
+     cprintf("\n");
+   }
+ }
++
++int sys_info (void) {
++  struct inf **t;
++  argptr (0, (void *)&t, sizeof (*t));
++  struct proc *p;
++  acquire (&ptable.lock);
++  for (p = ptable.proc; p < &(ptable.proc[NPROC]); p++) {
++    if (p->state == SLEEPING) inf.sleeping++;
++    if (p->state == RUNNABLE) inf.runnable++;
++    if (p->state == ZOMBIE) inf.zombie++;
++  }
++  release (&ptable.lock);
++  **t = inf;
++  return 0;
++}
+diff --git a/syscall.c b/syscall.c
+index ee85261..e06dc00 100644
+--- a/syscall.c
++++ b/syscall.c
+@@ -103,6 +103,7 @@ extern int sys_unlink(void);
+ extern int sys_wait(void);
+ extern int sys_write(void);
+ extern int sys_uptime(void);
++extern int sys_info(void);
+ 
+ static int (*syscalls[])(void) = {
+ [SYS_fork]    sys_fork,
+@@ -126,6 +127,7 @@ static int (*syscalls[])(void) = {
+ [SYS_link]    sys_link,
+ [SYS_mkdir]   sys_mkdir,
+ [SYS_close]   sys_close,
++[SYS_info]    sys_info,
+ };
+ 
+ void
+diff --git a/syscall.h b/syscall.h
+index bc5f356..c463579 100644
+--- a/syscall.h
++++ b/syscall.h
+@@ -20,3 +20,4 @@
+ #define SYS_link   19
+ #define SYS_mkdir  20
+ #define SYS_close  21
++#define SYS_info   22
+diff --git a/trap.c b/trap.c
+index 41c66eb..09d3591 100644
+--- a/trap.c
++++ b/trap.c
+@@ -36,6 +36,7 @@ idtinit(void)
+ void
+ trap(struct trapframe *tf)
+ {
++  inf.tot_traps++;
+   if(tf->trapno == T_SYSCALL){
+     if(myproc()->killed)
+       exit();
+@@ -64,6 +65,7 @@ trap(struct trapframe *tf)
+     // Bochs generates spurious IDE1 interrupts.
+     break;
+   case T_IRQ0 + IRQ_KBD:
++    inf.tot_intr++;
+     kbdintr();
+     lapiceoi();
+     break;
+diff --git a/user.h b/user.h
+index 4f99c52..1501c55 100644
+--- a/user.h
++++ b/user.h
+@@ -23,6 +23,7 @@ int getpid(void);
+ char* sbrk(int);
+ int sleep(int);
+ int uptime(void);
++int info(void **);
+ 
+ // ulib.c
+ int stat(const char*, struct stat*);
+diff --git a/usys.S b/usys.S
+index 8bfd8a1..3b8f4a7 100644
+--- a/usys.S
++++ b/usys.S
+@@ -29,3 +29,4 @@ SYSCALL(getpid)
+ SYSCALL(sbrk)
+ SYSCALL(sleep)
+ SYSCALL(uptime)
++SYSCALL(info)
