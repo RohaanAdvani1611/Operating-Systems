@@ -1,0 +1,211 @@
+diff --git a/defs.h b/defs.h
+index 82fb982..1680689 100644
+--- a/defs.h
++++ b/defs.h
+@@ -33,6 +33,7 @@ void            fileinit(void);
+ int             fileread(struct file*, char*, int n);
+ int             filestat(struct file*, struct stat*);
+ int             filewrite(struct file*, char*, int n);
++void		createFileCache();
+ 
+ // fs.c
+ void            readsb(int dev, struct superblock *sb);
+diff --git a/file.c b/file.c
+index 24b32c2..0c8e433 100644
+--- a/file.c
++++ b/file.c
+@@ -9,6 +9,9 @@
+ #include "spinlock.h"
+ #include "sleeplock.h"
+ #include "file.h"
++#include "mmu.h"
++
++extern void malloc(uint);
+ 
+ struct devsw devsw[NDEV];
+ struct {
+@@ -22,6 +25,97 @@ fileinit(void)
+   initlock(&ftable.lock, "ftable");
+ }
+ 
++struct slab{
++  struct file *f;
++  int isFull;
++  struct slab *next;
++};
++
++struct slab head;
++// struct file *fileCache;
++void createFileCache(){
++  char *k;
++  k = kalloc();
++  char *p = k;
++  for (; p <= k + PGSIZE; p += 128) memset(p, 0, 128);
++  // fileCache = (struct file*)k;
++  // head.f = (struct file*)k;;
++  // head.isFull = 0;
++  // head.next = 0;
++  head = (struct slab){.f = (struct file*)k, .isFull = 0, .next = 0};
++}
++
++struct file *getFileFromCache(){
++  struct slab *s = &head;
++  struct slab *trail = 0;
++  // find slabs having caches
++  while (s){
++    if (s->isFull == 0) break;
++    trail = s;
++    s = s->next;
++  }
++  //if no empty slabs, then allocate new page to slab linked list
++  if(!s){
++    trail->next = &((struct slab){.f = (struct file*)kalloc(), .isFull = 0, .next = 0});
++    s = trail->next;
++    char *k = (char*)(s->f);
++    char *p = k;
++    for (; p <= k + PGSIZE;p += 128) memset(p, 0, 128);
++  }
++
++  char *itr = (char*)(s->f);
++  struct file *temp;
++  char *i = itr;
++  for (; i <=  itr + PGSIZE; i += 128){
++    temp = (struct file*)i;
++    if (temp->ref == 0){
++      temp->ref = 1;
++      if (i + 128 == itr + PGSIZE) s->isFull = 1;
++      return temp;
++    }
++  }  
++  return 0;
++}
++
++void returnFiletoCache(struct file *f){
++  char *p = (char*)f;
++  char *q = (char*)PGROUNDDOWN((uint)(p));
++
++  struct slab *currSlab = (struct slab*)q;
++  struct file ff = *f;
++  if(f->ref < 1)
++    panic("fileclose");
++  if(--f->ref > 0){
++    // release(&ftable.lock);
++    return;
++  }
++  f->ref = 0;
++  f->type = FD_NONE;
++  if(ff.type == FD_PIPE)
++    pipeclose(ff.pipe, ff.writable);
++  else if(ff.type == FD_INODE){
++    begin_op();
++    iput(ff.ip);
++    end_op();
++  } 
++  //check if single cache is filled in slab, if yes, remove that slab
++  if (p == q){
++    struct slab *itr = &head, *trail = 0;
++    while (itr){
++      if (itr == currSlab)
++        break;
++      trail = itr;
++      itr = itr->next;
++    }
++    if (!itr)
++      return;
++    trail->next = itr->next;
++    itr->next = 0;
++    kfree((char*)(itr->f));
++    return;
++  }
++}
++
+ // Allocate a file structure.
+ struct file*
+ filealloc(void)
+@@ -29,15 +123,16 @@ filealloc(void)
+   struct file *f;
+ 
+   acquire(&ftable.lock);
+-  for(f = ftable.file; f < ftable.file + NFILE; f++){
+-    if(f->ref == 0){
+-      f->ref = 1;
+-      release(&ftable.lock);
+-      return f;
+-    }
+-  }
++  // for(f = ftable.file; f < ftable.file + NFILE; f++){
++  //   if(f->ref == 0){
++  //     f->ref = 1;
++  //     release(&ftable.lock);
++  //     return f;
++  //   }
++  // }
+   release(&ftable.lock);
+-  return 0;
++  f = getFileFromCache();
++  return f;
+ }
+ 
+ // Increment ref count for file f.
+@@ -56,27 +151,28 @@ filedup(struct file *f)
+ void
+ fileclose(struct file *f)
+ {
+-  struct file ff;
+-
+-  acquire(&ftable.lock);
+-  if(f->ref < 1)
+-    panic("fileclose");
+-  if(--f->ref > 0){
+-    release(&ftable.lock);
+-    return;
+-  }
+-  ff = *f;
+-  f->ref = 0;
+-  f->type = FD_NONE;
+-  release(&ftable.lock);
+-
+-  if(ff.type == FD_PIPE)
+-    pipeclose(ff.pipe, ff.writable);
+-  else if(ff.type == FD_INODE){
+-    begin_op();
+-    iput(ff.ip);
+-    end_op();
+-  }
++  returnFiletoCache(f);
++  // struct file ff;
++
++  // acquire(&ftable.lock);
++  // if(f->ref < 1)
++  //   panic("fileclose");
++  // if(--f->ref > 0){
++  //   release(&ftable.lock);
++  //   return;
++  // }
++  // ff = *f;
++  // f->ref = 0;
++  // f->type = FD_NONE;
++  // release(&ftable.lock);
++
++  // if(ff.type == FD_PIPE)
++  //   pipeclose(ff.pipe, ff.writable);
++  // else if(ff.type == FD_INODE){
++  //   begin_op();
++  //   iput(ff.ip);
++  //   end_op();
++  // }
+ }
+ 
+ // Get metadata about file f.
+diff --git a/main.c b/main.c
+index 9924e64..955192b 100644
+--- a/main.c
++++ b/main.c
+@@ -19,6 +19,7 @@ main(void)
+ {
+   kinit1(end, P2V(4*1024*1024)); // phys page allocator
+   kvmalloc();      // kernel page table
++  createFileCache();
+   mpinit();        // detect other processors
+   lapicinit();     // interrupt controller
+   seginit();       // segment descriptors
