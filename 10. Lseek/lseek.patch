@@ -1,0 +1,311 @@
+diff --git a/Makefile b/Makefile
+index 09d790c..b5b8120 100644
+--- a/Makefile
++++ b/Makefile
+@@ -181,9 +181,12 @@ UPROGS=\
+ 	_usertests\
+ 	_wc\
+ 	_zombie\
++	_program1\
++        _program2\
++
++fs.img: mkfs README hello.txt some_info.txt $(UPROGS)
++       ./mkfs fs.img README hello.txt some_info.txt $(UPROGS)
+ 
+-fs.img: mkfs README $(UPROGS)
+-	./mkfs fs.img README $(UPROGS)
+ 
+ -include *.d
+ 
+@@ -196,7 +199,7 @@ clean:
+ 
+ # make a printout
+ FILES = $(shell grep -v '^\#' runoff.list)
+-PRINT = runoff.list runoff.spec README toc.hdr toc.ftr $(FILES)
++PRINT = runoff.list runoff.spec README hello.txt some_info.txt toc.hdr toc.ftr $(FILES)
+ 
+ xv6.pdf: $(PRINT)
+ 	./runoff
+@@ -250,8 +253,8 @@ qemu-nox-gdb: fs.img xv6.img .gdbinit
+ EXTRA=\
+ 	mkfs.c ulib.c user.h cat.c echo.c forktest.c grep.c kill.c\
+ 	ln.c ls.c mkdir.c rm.c stressfs.c usertests.c wc.c zombie.c\
+-	printf.c umalloc.c\
+-	README dot-bochsrc *.pl toc.* runoff runoff1 runoff.list\
++	printf.c umalloc.c program1.c program2.c\
++        README hello.txt some_info.txt dot-bochsrc *.pl toc.* runoff runoff1 runoff.list\
+ 	.gdbinit.tmpl gdbutil\
+ 
+ dist:
+diff --git a/fcntl.h b/fcntl.h
+index d565483..ccfda70 100644
+--- a/fcntl.h
++++ b/fcntl.h
+@@ -2,3 +2,8 @@
+ #define O_WRONLY  0x001
+ #define O_RDWR    0x002
+ #define O_CREATE  0x200
++
++#define SEEK_SET    0
++#define SEEK_CUR    1
++#define SEEK_END    2
++
+diff --git a/hello.txt b/hello.txt
+new file mode 100644
+index 0000000..9fd202d
+--- /dev/null
++++ b/hello.txt
+@@ -0,0 +1 @@
++Rohaan Advani - Mis - 111903151 - XV6 Lseek Assignment
+diff --git a/kernel.ld b/kernel.ld
+index 4e12e14..51e6a40 100644
+--- a/kernel.ld
++++ b/kernel.ld
+@@ -26,12 +26,15 @@ SECTIONS
+ 		PROVIDE(__STAB_BEGIN__ = .);
+ 		*(.stab);
+ 		PROVIDE(__STAB_END__ = .);
++                BYTE(0) /* Force the linker to allocate space for this section */
++
+ 	}
+ 
+ 	.stabstr : {
+ 		PROVIDE(__STABSTR_BEGIN__ = .);
+ 		*(.stabstr);
+ 		PROVIDE(__STABSTR_END__ = .);
++                BYTE(0) /* Force the linker to allocate space for this section */
+ 	}
+ 
+ 	/* Adjust the address for the data segment to the next page */
+diff --git a/program1.c b/program1.c
+new file mode 100644
+index 0000000..b4ebd44
+--- /dev/null
++++ b/program1.c
+@@ -0,0 +1,49 @@
++#include "types.h"
++#include "user.h"
++#include "fcntl.h"
++
++#define MAX_SIZE    1024
++
++int main(int argc, char *argv[]) {
++
++    int fd, offset, length, i, j, k;
++    char data[MAX_SIZE];
++    char user_string[MAX_SIZE];
++
++    if (argc < 5) {
++        printf(1, "Usage : %s 'filename' 'offset' 'len' 'string'\n", argv[0]);
++        exit();
++    }
++
++    fd = open(argv[1], O_RDONLY);
++    if (fd == -1) {
++        printf(1, "Error while opening the file\n");
++        exit();
++    }
++
++    offset = atoi(argv[2]);
++    length = atoi(argv[3]);
++
++    lseek(fd, offset, SEEK_SET);
++    read(fd, data, length);
++    data[length] = '\0';
++
++    k = 0;
++    for (i = 4; i < argc; i++) {
++        for (j = 0; argv[i][j] != '\0'; j++) {
++            user_string[k++] = argv[i][j];
++        }
++        user_string[k++] = ' ';
++    }
++    user_string[k - 1] = '\0';
++
++    if (!(strcmp(data, user_string))) {
++        printf(1, "Strings matched\n");
++    }
++    else {
++        printf(1, "Strings did not matched\n");
++    }
++
++    close(fd);
++    exit();
++}
+diff --git a/program2.c b/program2.c
+new file mode 100644
+index 0000000..9ff4ace
+--- /dev/null
++++ b/program2.c
+@@ -0,0 +1,63 @@
++#include "types.h"
++#include "user.h"
++#include "fcntl.h"
++
++#define MAX_SIZE    1024
++
++int main(int argc, char *argv[]) {
++
++    int fd1, fd2, file_length, individual_length, i;
++    int random_order[10] = {2, 8, 0, 9, 1, 6, 3, 4, 5, 7};
++    char data[MAX_SIZE];
++
++    if (argc != 2) {
++        printf(1, "Usage : %s 'filename'\n", argv[0]);
++        exit();
++    }
++
++    fd1 = open(argv[1], O_RDONLY);
++    if (fd1 == -1) {
++        printf(1, "Error while opening the file\n");
++        exit();
++    }
++    fd2 = open("copy", O_CREATE | O_RDWR);
++    if (fd2 == -1) {
++        printf(1, "Error while opening the file\n");
++        exit();
++    }
++
++    file_length = lseek(fd1, 0, SEEK_END);
++    printf(1, "FILE1 LENGTH = %d\n", file_length);
++    lseek(fd1, 0, SEEK_SET);
++    read(fd1, data, file_length);
++    data[file_length] = '\0';
++    printf(1, "DATA FROM FILE1 : %s\n", data);
++
++    individual_length = (int)(file_length / 10);
++    for (i = 0; i < 9; i++) {
++        lseek(fd1, individual_length * random_order[i], SEEK_SET);
++        read(fd1, data, individual_length);
++        data[individual_length] = '\0';
++        lseek(fd2, individual_length * random_order[i], SEEK_SET);
++        write(fd2, data, individual_length);
++    }
++    individual_length = file_length - (9 * individual_length);
++
++    lseek(fd1, individual_length * random_order[9], SEEK_SET);
++    read(fd1, data, individual_length);
++    data[individual_length] = '\0';
++    lseek(fd2, individual_length * random_order[9], SEEK_SET);
++    write(fd2, data, individual_length);
++
++    file_length = lseek(fd2, 0, SEEK_END);
++    printf(1, "FILE2 LENGTH = %d\n", file_length);
++
++    lseek(fd2, 0, SEEK_SET);
++    read(fd2, data, file_length);
++    data[file_length] = '\0';
++    printf(1, "DATA FROM FILE2 : %s\n", data);
++
++    close(fd1);
++    close(fd2);
++    exit();
++}
+diff --git a/some_info.txt b/some_info.txt
+new file mode 100644
+index 0000000..33b0728
+--- /dev/null
++++ b/some_info.txt
+@@ -0,0 +1 @@
++A signal is a software interrupt delivered to a process. The operating system uses signals to report exceptional situations to an executing program. Some signals report errors such as references to invalid memory addresses; others report asynchronous events, such as disconnection of a phone line. The GNU C Library defines a variety of signal types, each for a particular kind of event. Some kinds of events make it inadvisable or impossible for the program to proceed as usual, and the corresponding signals normally abort the program. Other kinds of signals that report harmless events are ignored by default. If you anticipate an event that causes signals, you can define a handler function and tell the operating system to run it when that particular type of signal arrives. Finally, one process can send a signal to another process; this allows a parent process to abort a child, or two related processes to communicate and synchronize.
+diff --git a/syscall.c b/syscall.c
+index ee85261..bb96e30 100644
+--- a/syscall.c
++++ b/syscall.c
+@@ -103,6 +103,7 @@ extern int sys_unlink(void);
+ extern int sys_wait(void);
+ extern int sys_write(void);
+ extern int sys_uptime(void);
++extern int sys_lseek(void);
+ 
+ static int (*syscalls[])(void) = {
+ [SYS_fork]    sys_fork,
+@@ -126,6 +127,7 @@ static int (*syscalls[])(void) = {
+ [SYS_link]    sys_link,
+ [SYS_mkdir]   sys_mkdir,
+ [SYS_close]   sys_close,
++[SYS_lseek]   sys_lseek,
+ };
+ 
+ void
+diff --git a/syscall.h b/syscall.h
+index bc5f356..93fbf00 100644
+--- a/syscall.h
++++ b/syscall.h
+@@ -20,3 +20,4 @@
+ #define SYS_link   19
+ #define SYS_mkdir  20
+ #define SYS_close  21
++#define SYS_lseek  22
+diff --git a/sysfile.c b/sysfile.c
+index bfe61b7..fcbb732 100644
+--- a/sysfile.c
++++ b/sysfile.c
+@@ -442,3 +442,46 @@ sys_pipe(void)
+   fd[1] = fd1;
+   return 0;
+ }
++
++int sys_lseek(void) {
++
++    int fd, offset, base, i, remaining_bytes, new_offset;
++    struct file *f;
++    int block_size = 4096;
++    char null_block[block_size];
++
++    if (argfd(0, &fd, &f) < 0)
++        return -1;
++    if (argint(1, &offset) < 0)
++        return -1;
++    if (argint(2, &base) < 0)
++        return -1;
++
++    if (base == 0)
++        new_offset = offset;
++    else if (base == 1)
++        new_offset = f->off + offset;
++    else if (base == 2)
++        new_offset = f->ip->size + offset;
++    else
++        return -1;
++
++    if (new_offset < 0)
++        return -1;
++
++    if (new_offset > f->ip->size) {
++        remaining_bytes = new_offset - f->ip->size;
++
++        for (i = 0; i < block_size; i++) {
++            null_block[i] = '\0';
++        }
++
++        while (remaining_bytes > 0) {
++            filewrite(f, (char *)null_block, remaining_bytes % (block_size + 1));
++            remaining_bytes -= block_size;
++        }
++    }
++
++    f->off = new_offset;
++    return new_offset;
++}
+diff --git a/user.h b/user.h
+index 4f99c52..d05ba2c 100644
+--- a/user.h
++++ b/user.h
+@@ -23,6 +23,7 @@ int getpid(void);
+ char* sbrk(int);
+ int sleep(int);
+ int uptime(void);
++int lseek(int, int, int);
+ 
+ // ulib.c
+ int stat(const char*, struct stat*);
+diff --git a/usys.S b/usys.S
+index 8bfd8a1..6244300 100644
+--- a/usys.S
++++ b/usys.S
+@@ -29,3 +29,4 @@ SYSCALL(getpid)
+ SYSCALL(sbrk)
+ SYSCALL(sleep)
+ SYSCALL(uptime)
++SYSCALL(lseek)
